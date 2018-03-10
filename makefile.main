@@ -1,0 +1,807 @@
+-include makefile.archive
+-include .config         
+
+#-----------------------------------------DEFINING VARIBLES-------------------------------------------
+
+DEBUGMODE ?= 0
+
+
+
+
+MAKETOOLVERSION := 0.0.11
+
+SHELL := /bin/bash
+
+binDir ?= .bin
+tempDir ?= .__temp__
+testsDir ?= tests
+srcDir ?= src
+solutionsDir ?= solutions
+gradersDir ?= graders
+statementDir ?= statement
+
+define noSpaceCheck
+$(1) := $(strip $($(1)))
+ifneq ($(words $($(1))),1)
+$$(error No spaces allowed at $(1))
+endif
+endef
+
+$(eval $(call noSpaceCheck,binDir))
+$(eval $(call noSpaceCheck,tempDir))
+$(eval $(call noSpaceCheck,testsDir))
+$(eval $(call noSpaceCheck,srcDir))
+$(eval $(call noSpaceCheck,solutionsDir))
+$(eval $(call noSpaceCheck,gradersDir))
+$(eval $(call noSpaceCheck,statementDir))
+
+
+ifeq ($(OS),Windows_NT)
+__internal_OnWindows := 1
+else
+__internal_OnWindows :=
+endif
+
+JAVACFLAGS ?=
+JAVASOLFLAGS ?= -ea -Xmx256M -Xss128M -DNOFILES
+GCCSOLFLAGS ?= -DNOFILES
+FPCFLAGS ?= -O2
+FPCSOLFLAGS ?= -dNOFILES
+DCCFLAGS ?= -cc
+DCCSOLFLAGS ?= -DNOFILES
+PYTHONSOLFLAGS ?= NOFILES
+ifndef GCCFLAGS
+	GCCFLAGS := -O2 -Wall -Wextra
+	ifeq ($(__internal_OnWindows),1)
+		GCCFLAGS += -Wl,--stack=256000000
+	endif
+endif
+
+ifeq ($(__internal_OnWindows),1)
+	DCOMPILER ?= dmd
+else
+	DCOMPILER ?= gdmd
+endif
+
+ifndef DFLAGS
+	DFLAGS := -O -wi -od.
+	ifeq ($(__internal_OnWindows),1)
+		DFLAGS += -L/STACK:268435456
+	endif
+endif
+
+DSOLFLAGS ?= -version=NOFILES
+
+HandSuffix ?= hand
+problem ?= $(notdir $(shell basename "`pwd`"))
+
+$(eval $(call noSpaceCheck,HandSuffix))
+$(eval $(call noSpaceCheck,problem))
+
+
+ifndef NoAnswers
+ifndef mainSuffix
+   	$(warning mainSuffix is undefined)
+   	NoAnswers := 1
+else
+$(eval $(call noSpaceCheck,mainSuffix))
+main := $(problem)_$(mainSuffix)
+mainSrc := $(notdir $(filter $(solutionsDir)/$(main).%,$(SolSrc)))
+mainExec := $(filter $(binDir)/$(main).%,$(SolExec))
+endif
+endif
+
+ifneq ($(NonDefaultGenlines),1)
+GenLinesGenerator ?= genlines.sh
+$(eval $(call noSpaceCheck,GenLinesGenerator))
+ifeq ($(wildcard $(GenLinesGenerator)),)
+    $(error Can not find $(GenLinesGenerator). Redefine GenLinesGenerator to use other name for it)
+endif
+endif
+
+StatementTests := $(filter $(Tests),$(StatementFiles))
+StatementAnswers := $(filter $(TestAnswers),$(StatementFiles))
+
+TestMask ?= %03d
+GenLinesFile ?= .tests
+
+$(eval $(call noSpaceCheck,TestMask))
+$(eval $(call noSpaceCheck,GenLinesFile))
+
+InputFileName ?= $(problem).in
+OutputFileName ?= $(problem).out
+
+VPATH = .:$(srcDir):$(solutionsDir)
+
+ifdef __internal_enable_graders
+VPATH += :$(gradersDir)
+GCCSOLFLAGS += -Igraders
+endif
+
+
+ifdef NoAnswers
+OverrideTestAnswersRule := 1
+__internal_NoAnswers := 1
+endif
+
+ifneq ($(filter %.java,$(CheckerSrc)),)
+Testlib4jPath ?= ./$(srcDir)
+$(eval $(call noSpaceCheck,Testlib4jPath))
+ifeq ($(wildcard $(Testlib4jPath)/testlib4j.jar),)
+    $(error Can not find $(Testlib4jPath)/testlib4j.jar. Redefine Testlib4jPath to set path for testlib4j.jar)
+endif
+endif
+
+
+RecolorResults ?= sed -e "s/: ok/:\x1b[32;1m ok\x1b[0m/" -e "s/: wrong answer/:\x1b[31;1m wrong answer\x1b[0m/" \
+                      -e "s/: wrong output format/:\x1b[31;1m  wrong output format\x1b[0m/" \
+                      -e "s/: FAIL/:\x1b[31;1m FAIL\x1b[0m/" -e "s/$$$$/\x1b[37;0m\x1b[0m\x1b[0m/" \
+
+#-----------------------------------------END DEFINING VARIBLES-------------------------------------------
+#-----------------------------------------DECLARING TARGETS-------------------------------------------
+
+ifneq ($(MAKETOOLVERSION),$(ConfigVersion))
+ifneq ($(wildcard .config),)
+$(warning Make tool version and config version is inconsistent. Trying reload to fix. Try 'make forceclean', if reload does not help.)
+$(shell rm .config)
+endif
+endif
+
+.PHONY: check_main info wipe clean reload md5sum md5check inputs problemInfo testingclean forceclean archive
+
+ifneq ($(DEBUGMODE),1)
+.SILENT: $(Tests) $(InDirTests) $(InDirTestAnswers) $(DoNotGenTests) $(TestsValidateFlags) $(TestsGenerateFlags) $(TestAnswers) $(MultiGenInternalRules) info .config reload md5sum md5check problemInfo systeminfo archive
+endif
+
+ifndef __internal_NoAnswers
+all: $(TestAnswers)
+else
+all: inputs
+endif
+
+all : $(StatementFiles:%=$(statementDir)/%.t)
+
+ifdef mainExec
+main: $(mainExec)
+endif
+
+validate_all : $(TestsValidateFlags)
+
+inputs : $(Tests)
+
+$(ValidatorExec) : $(ValidatorSrc) | $(binDir)
+$(CheckerExec) : $(CheckerSrc) | $(binDir)
+
+validate : $(ValidatorExec);
+check : $(CheckerExec);
+
+$(JAVASolShortNames) : % : $(binDir)/$(problem)_%.jar
+$(CSolShortNames) $(CPPSolShortNames) $(PASSolShortNames) $(DPRSolShortNames) $(DSolShortNames): % : $(binDir)/$(problem)_%.exe
+$(PYSolShortNames) : % : $(binDir)/$(problem)_%.py
+
+
+$(InDirTests) : $(testsDir)/% : $(tempDir)/%.gen | $(ValidatorExec) $(testsDir) $(tempDir)
+
+ifndef __internal_NoAnswers
+$(InDirTestAnswers) : $(mainSrc) $(CheckerSrc) | $(mainExec) $(CheckerExec) $(binDir)
+endif
+
+.DELETE_ON_ERROR: $(SolExec) $(ValidatorExec) $(CheckerExec)
+
+$(StatementTests) : % : $(statementDir)/%.t
+
+$(StatementAnswers) : % : $(statementDir)/%.t
+
+statement : $(StatementFiles)
+
+check_main: check_$(mainSuffix)
+
+check_all: $(foreach sol,$(SolShortNames),check_$(sol))
+
+none :
+
+.ONESHELL: $(Tests) $(TestAnswers)
+
+.SECONDARY : $(SolExec)	$(ValidatorExec) $(CheckerExec)
+
+
+#-----------------------------------------END DECLARING TARGETS-------------------------------------------
+#-----------------------------------------COMMON-------------------------------------------
+
+ifndef runSolution
+define runSolution
+echo Running $(1) on $(2); \
+$(if $(filter $(1),$(SolShortNames)),,echo No solution $(1) found. Try reload to fix it, if it was added recently && false;)\
+$(if $(filter $(1),$(FileIOSol)), \
+    rm -rf "$(1)$(2)runbox";\
+    mkdir "$(1)$(2)runbox";\
+	cp "$(testsDir)/$(2)" "$(1)$(2)runbox/$(InputFileName)";\
+    cd "$(1)$(2)runbox"; \
+	$(if $(filter $(SolExec),$(binDir)/$(problem)_$(1).exe),../$(binDir)/$(problem)_$(1).exe)  \
+	$(if $(filter $(SolExec),$(binDir)/$(problem)_$(1).jar),java -jar $(JAVASOLFLAGS) ../$(binDir)/$(problem)_$(1).jar) \
+	$(if $(filter $(SolExec),$(binDir)/$(problem)_$(1).py),../$(binDir)/$(problem)_$(1).py $(PYTHONSOLFLAGS)); \
+	cd ..;\
+	mv "$(1)$(2)runbox/$(OutputFileName)" "$(testsDir)/$(3)";\
+	rm -rf "$(1)$(2)runbox"\
+,\
+	$(if $(filter $(SolExec),$(binDir)/$(problem)_$(1).exe),./$(binDir)/$(problem)_$(1).exe <$(testsDir)/$(2) >$(testsDir)/$(3))  \
+	$(if $(filter $(SolExec),$(binDir)/$(problem)_$(1).jar),java -jar $(JAVASOLFLAGS) ./$(binDir)/$(problem)_$(1).jar <$(testsDir)/$(2) >$(testsDir)/$(3)) \
+	$(if $(filter $(SolExec),$(binDir)/$(problem)_$(1).py),./$(binDir)/$(problem)_$(1).py $(PYTHONSOLFLAGS) <$(testsDir)/$(2) >$(testsDir)/$(3)) \
+)
+endef
+endif
+
+#-----------------------------------------END COMMON-------------------------------------------
+#-----------------------------------------DIRICTORY TARGETS-------------------------------------------
+
+$(binDir) :
+	mkdir -p $(binDir)
+	@$(if $(__internal_OnWindows),-attrib +H $(binDir))
+
+$(testsDir) :
+	mkdir -p $(testsDir)
+
+$(tempDir) :
+	mkdir -p $(tempDir)
+	@$(if $(__internal_OnWindows),-attrib +H $(tempDir))
+
+#-----------------------------------------END DIRICTORY TARGETS-------------------------------------------
+#-----------------------------------------COMPILING TARGETS-------------------------------------------
+
+$(binDir)/%.exe: %.cpp
+	g++ $(GCCFLAGS) -o $@ $^
+
+$(binDir)/%.exe: %.c
+	gcc $(GCCFLAGS) -o $@ $^
+
+$(binDir)/%.exe: %.d
+	cd $(binDir) && $(DCOMPILER) $(DFLAGS) -op -of$*.exe ../$^ 	
+
+
+$(binDir)/%.jar : %.java
+	@mkdir -p "$*compilebox"
+	@javac -d "$*compilebox" $(JAVACFLAGS) $^
+	cd $*compilebox && jar cfe ../$@ $* *.class && cd ..
+	@rm -rf "$*compilebox"
+
+$(binDir)/%.py: %.py
+	cp --no-preserve=timestamp $^ $@
+	chmod +x $@
+
+ifneq ($(filter %.java,$(CheckerSrc)),)
+$(CheckerExec) : $(CheckerSrc)
+	@mkdir -p Checkcompilebox
+	@cp $(Testlib4jPath)/testlib4j.jar Checkcompilebox
+	@cd Checkcompilebox && jar xf testlib4j.jar && cd ..
+	javac -classpath "Checkcompilebox" -d Checkcompilebox $^
+	@echo Main-Class: ru.ifmo.testlib.CheckerFramework> "Checkcompilebox/META-INF/manifest.1"
+	@echo Checker-Class: Check>> "Checkcompilebox/META-INF/manifest.1"
+	@cd Checkcompilebox && jar cfm ../$@ META-INF/manifest.1 *.class ru && cd ..
+	@rm -rf Checkcompilebox
+endif
+
+#-----------------------------------------SOLUTION COMPILING TARGETS-------------------------------------------
+
+$(CPPSolExec) : $(binDir)/%.exe : $(solutionsDir)/%.cpp $(if $(__internal_enable_graders),$(gradersDir)/grader.cpp) | $(binDir)
+	g++ $(GCCFLAGS) $(GCCSOLFLAGS) -o $@ $^
+
+$(CSolExec) : $(binDir)/%.exe : $(solutionsDir)/%.c $(if $(__internal_enable_graders),$(gradersDir)/grader.c) | $(binDir)
+	gcc $(GCCFLAGS) $(GCCSOLFLAGS) -o $@ $^
+
+$(DSolExec) : $(binDir)/%.exe : $(solutionsDir)/%.d | $(binDir)
+	cd $(binDir) && $(DCOMPILER) $(DFLAGS) -op -of$*.exe ../$^ 	
+
+
+$(JAVASolExec) : $(binDir)/%.jar : $(solutionsDir)/%.java | $(binDir)
+
+ifeq ($(EnableGraders),1)
+$(PASSolExec) : $(binDir)/%.exe : $(solutionsDir)/%.pas $(gradersDir)/grader.pas $(gradersDir)/graderlib.pas | $(binDir)
+	@echo Compiling "$*"
+	@mkdir -p "$*compilebox"
+	@cp "$^" "$*compilebox"
+	@mv "$*compilebox/$*.pas" "$*compilebox/$(problem).pas"
+	@cd "$*compilebox" && fpc $(FPCFLAGS) -o../$@ grader.pas && cd ..
+	@rm -rf "$*compilebox"
+else
+$(PASSolExec) : $(binDir)/%.exe : $(solutionsDir)/%.pas | $(binDir)
+	fpc $(FPCFLAGS) $(FPCSOLFLAGS) $^ -o./$@
+endif
+
+$(DPRSolExec): $(binDir)/%.exe : $(solutionsDir)/%.dpr | $(binDir)
+	cd $(solutionsDir) && dcc32 $(DCCFLAGS) $(DCCSOLFLAGS) $*.dpr -E../$(binDir) && cd ..
+
+#-----------------------------------------END SOLUTION COMPILING TARGETS-------------------------------------------
+#-----------------------------------------END COMPILING TARGETS-------------------------------------------
+#-----------------------------------------TESTS TARGETS-------------------------------------------
+
+ifndef OverrideTestsRule
+$(filter-out $(MultiGenTests),$(InDirTests)) : $(testsDir)/% :
+	rm -f "$@"
+	rm -f "$(binDir)/$@"
+	echo "Making $*" && cd $(binDir) && ($(Gen$*Line)) $(if $(filter $@,$(FileTests)), && if [ -e $* ] ; then mv $* ../$(testsDir)/$*; fi,>../$@) && cd ..
+	test -e $@
+
+.PHONY : $(Tests)
+$(Tests) : % : $(testsDir)/% $(tempDir)/%.val
+
+$(MultiGenInternalRules): __internal_%MultiTestIntermediate:
+	rm -f $($*Tests:$(testsDir)/%="$(binDir)/%")
+	rm -f $($*Tests:%="%")
+	echo "Running $*" && cd $(binDir) && ($(Gen$(__internal_$*Major)Line)) && cd ..
+	testsInBinDir=`ls -1 $(binDir) | grep $($*Tests:$(testsDir)/%=-e "%") 2>/dev/null | sed -e "s/^/.\/$(binDir)\//"` &&\
+	if [ "$${testsInBinDir}" != "" ] ; then mv $${testsInBinDir} $(testsDir); fi
+	$(if $(Gen$*ExtraResult), test -e .bin/$(Gen$*ExtraResult) && mv .bin/$(Gen$*ExtraResult) .)
+endif
+
+ifneq ($(ValidatorCommand),NO)
+$(TestsValidateFlags) : $(tempDir)/%.val : $(testsDir)/% $(ValidatorSrc) | $(ValidatorExec) $(tempDir)
+	rm -f "$(testsDir)/$*.bad"
+	(echo "Validating $*" && $(ValidatorCommand) $(Test$*Group) <$(testsDir)/$*) || (mv $(testsDir)/$* $(testsDir)/$*.bad && false)
+	if [ -e $(statementDir)/$*.t ] ; then \
+		diff -w $(testsDir)/$* $(statementDir)/$*.t || (mv $(testsDir)/$* $(testsDir)/$*.bad && echo "Test $* doesn't match to $(statementDir)/$*.t" && false);\
+	fi
+	echo -ne "" >$@
+else
+$(TestsValidateFlags) : $(tempDir)/%.val : $(testsDir)/% | $(tempDir)
+	rm -f "$(testsDir)/$*.bad"
+	if [ -e $(statementDir)/$*.t ] ; then \
+		diff -w $(testsDir)/$* $(statementDir)/$*.t || (mv $(testsDir)/$* $(testsDir)/$*.bad && echo "Test $* doesn't match to $(statementDir)/$*.t" && false);\
+	fi
+	echo -ne "" >$@
+endif
+
+$(TestsGenerateFlags) : $(tempDir)/%.gen : | $(tempDir)
+	echo "$(Gen$*Line)" > $@
+
+ifndef OverrideTestAnswersRule
+$(InDirTestAnswers) : $(testsDir)/%.a : $(testsDir)/% | $(tempDir)/%.val
+	rm -f "$@"
+	rm -f "$@.bad"
+	$(call runSolution,$(mainSuffix),$*,$*.a.bad)
+	($(CheckerCommand) $(if $(filter-out diff,$(CheckerCommand)),$(testsDir)/$*) $@.bad $@.bad 2>&1 && mv $@.bad $@) | sed 's/^/$* : /' | $(RecolorResults)
+	if [ -e $(statementDir)/$*.a.t ] ; then \
+		($(CheckerCommand) $(if $(filter-out diff,$(CheckerCommand)),$(testsDir)/$*) $(statementDir)/$*.a.t $@ 2>&1 || \
+		   (echo "Answer $(statementDir)/$*.a is not correct" && mv $@ $@.bad)) | sed 's/^/$(statementDir)\/$*.a.t : /' | $(RecolorResults) ;\
+	fi
+	test -e $@
+
+.PHONY : $(TestAnswers)
+$(TestAnswers) : % : $(testsDir)/%
+endif
+
+#-----------------------------------------END TESTS TARGETS-------------------------------------------
+#-----------------------------------------STATEMENT TARGETS-------------------------------------------
+
+$(StatementTests:%=$(statementDir)/%.t) : $(statementDir)/%.t : $(tempDir)/%.val
+	@if [ -e $@ ] ; then\
+	    touch $@;\
+	else \
+		echo $@ not found. Copying $* to it.;\
+		cp --no-preserve=timestamp $(testsDir)/$* $@;\
+	fi
+
+$(StatementAnswers:%=$(statementDir)/%.t) : $(statementDir)/%.t : $(testsDir)/%
+	@if [ -e $@ ] ; then\
+	    touch $@;\
+	else \
+		echo $@ not found. Copying $* to it.;\
+		cp --no-preserve=timestamp $(testsDir)/$* $@;\
+	fi
+
+#-----------------------------------------END STATEMENT TARGETS-------------------------------------------
+#-----------------------------------------CHECKING TARGETS-------------------------------------------
+
+define CheckRuleTemplate
+.PHONY: check_$(1)
+ifneq ($(DEBUGMODE),1)
+.SILENT : check_$(1)
+endif
+check_$(1): $(foreach test,$(Tests),check_$(1)@$(test))
+	cp "$(1).log" "$(1).log.temp"
+	cat "$(1).log.temp" | sort >$(1).log
+	rm "$(1).log.temp"
+
+.INTERMEDIATE : __internal_check_$(1)_clean
+.PHONY : __internal_check_$(1)_clean
+ifneq ($(DEBUGMODE),1)
+.SILENT : __internal_check_$(1)_clean
+endif
+__internal_check_$(1)_clean :
+	rm -f "$1.log"
+endef
+
+$(foreach sol,$(SolShortNames),$(eval $(call CheckRuleTemplate,$(sol))))
+
+define CheckOnTestRuleTemplate
+.PHONY : check_$(1)@$(2)
+ifneq ($(DEBUGMODE),1)
+.SILENT : check_$(1)@$(2)
+endif
+.ONESHELL: check_$(1)@$(2)
+check_$(1)@$(2) : $(1) $(2) $(if $(__internal_NoAnswers), ,$(2).a) $(CheckerExec) __internal_check_$(1)_clean
+	rm -f "$(testsDir)/$(2).$(1).out"
+	$(call runSolution,$(1),$(2),$(2).$(1).out)
+	$(CheckerCommand) $(if $(filter-out diff,$(CheckerCommand)),$(testsDir)/$(2))\
+					  $(testsDir)/$(2).$(1).out $(if $(__internal_NoAnswers),$(testsDir)/$(2).$(1).out,$(testsDir)/$(2).a) 2>&1 \
+					  | sed 's/^/$(1)@$(2) : /' | tee -a $(1).log | $(RecolorResults)
+endef
+
+$(foreach test,$(Tests), $(foreach sol,$(SolShortNames),$(eval $(call CheckOnTestRuleTemplate,$(sol),$(test)))))
+
+#-----------------------------------------END CHECKING TARGETS-------------------------------------------
+#-----------------------------------------CLEANING TARGETS-------------------------------------------
+
+testingclean::
+	rm -f $(testsDir)/*.out
+	rm -f $(testsDir)/*.log
+	@rm -f $(Tests:%=$(tempDir)/%)
+	rm -f *.log
+
+
+wipe:: testingclean
+	rm -f $(testsDir)/*.bad
+	rm -rf $(binDir)
+
+clean:: wipe
+	rm -rf $(testsDir)
+	rm -rf $(tempDir)
+
+forceclean :: clean
+	@$(if $(__internal_OnWindows),-if [ -e .config ] ; then attrib -H .config; fi)
+	rm .config
+	@$(if $(__internal_OnWindows),-if [ -e $(GenLinesFile) ] ; then attrib -H $(GenLinesFile); fi)
+	rm "$(GenLinesFile)"
+
+#-----------------------------------------END CLEANING TARGETS-------------------------------------------
+#-----------------------------------------ARCHIVE TARGETS-------------------------------------------
+archive : md5sum statement
+	rm -f makefile.archive
+	echo all : md5check >> makefile.archive
+	echo ArchiveMode := 1 >> makefile.archive
+	echo problem := $(problem) >> makefile.archive
+	echo CheckerSrc := $(CheckerSrc) >> makefile.archive
+	echo ValidatorSrc := $(ValidatorSrc) >> makefile.archive
+
+#-----------------------------------------END ARCHIVE TARGETS-------------------------------------------
+#-----------------------------------------MD5 TARGETS-------------------------------------------
+
+__internal_md5files := $(Tests) $(if $(md5Answers), $(TestAnswers))
+__internal_md5files_indir := $(InDirTests) $(if $(md5Answers), $(InDirTestAnswers))
+
+md5sum : $(__internal_md5files) | $(tempDir)
+	$(if $(ArchiveMode), echo md5sum is not allowed in archive mode && false)
+	cp $(__internal_md5files_indir) $(tempDir)
+	$(if $(__internal_OnWindows),cd $(tempDir) && echo "dos2unix Tests" && dos2unix $(__internal_md5files) >/dev/null 2>&1)
+	echo '# This md5sums were calculated for tests with LF as EOLN' >tests.unix.md5
+	cd $(tempDir) && echo "Calculating md5 with LF" && md5sum -t $(__internal_md5files) >>../tests.unix.md5
+	rm -f $(__internal_md5files:%=$(tempDir)/%)
+	cp $(__internal_md5files_indir) $(tempDir)
+	$(if $(__internal_OnWindows),,cd $(tempDir) && echo "unix2dos Tests" && unix2dos $(__internal_md5files) >/dev/null 2>&1)
+	echo '# This md5sums were calculated for tests with CRLF as EOLN' >tests.win.md5
+	cd $(tempDir) && echo "Calculating md5 with CRLF" && md5sum -t $(__internal_md5files) >>../tests.win.md5
+	rm -f $(__internal_md5files:%=$(tempDir)/%)
+
+md5check : $(__internal_md5files) | $(tempDir)
+	if ! [ -e tests.$(if $(__internal_OnWindows),win,unix).md5 ] ; then \
+		echo Nothing to check.;\
+		echo make md5sum first;\
+		false;\
+	fi
+	cp $(__internal_md5files_indir) $(tempDir)
+	rm -f $(tempDir)/OK
+	if which md5sum >/dev/null 2>&1; then \
+		cd $(tempDir) && echo "Checking md5 with $(if $(__internal_OnWindows),CRLF,LF)" && md5sum -c ../tests.$(if $(__internal_OnWindows),win,unix).md5 && echo OK >OK;\
+	else \
+	    echo "md5sum wasn't checked.";\
+	fi
+	rm -f $(__internal_md5files:%=$(tempDir)/%)
+	test -e $(tempDir)/OK >/dev/null 2>&1
+	rm -f $(tempDir)/OK
+
+#-----------------------------------------END TARGETS-------------------------------------------
+#-----------------------------------------INFO TARGETS-------------------------------------------
+
+problemInfo:
+	echo Problem Name'                             ': $$\(problem')           '= $(problem)
+	echo Main Solution Suffix'                     ': $$\(mainSuffix')        '= $(mainSuffix)
+	echo Main Solution'                            ': $$\(mainSrc')           '= $(mainSrc) \(should not be defined directly')'
+	echo Mask for Tests'                           ': $$\(TestMask')          '= $(TestMask)
+	echo Generator of tests.mk'                    ': $$\(GenLinesGenerator') '= $(GenLinesGenerator)
+	echo Suffix for HandTests'                     ': $$\(HandSuffix')        '= $(HandSuffix)
+	echo Flags for javac'                          ': $$\(JAVACFLAGS')        '= $(JAVACFLAGS)
+	echo Flags for running solution on java'       ': $$\(JAVASOLFLAGS')      '= $(JAVASOLFLAGS)
+	echo Flags for gcc and g++'                    ': $$\(GCCFLAGS')          '= $(GCCFLAGS)
+	echo Additional flags for c and c++ solutions' ': $$\(GCCSOLFLAGS')       '= $(GCCSOLFLAGS)
+	echo Flags for fpc'                            ': $$\(FPCFLAGS')          '= $(FPCFLAGS)
+	echo Additional flags for fpc solutions'       ': $$\(FPCSOLFLAGS')       '= $(FPCSOLFLAGS)
+	echo Flags for DPR'                            ': $$\(DCCFLAGS')          '= $(DCCFLAGS)
+	echo Additional flags for DPR solutions'       ': $$\(DCCSOLFLAGS')       '= $(DCCSOLFLAGS)
+	echo Additional flags for python solutions'    ': $$\(PYTHONSOLFLAGS')    '= $(PYTHONSOLFLAGS)
+
+systeminfo :
+	(echo "Checking make" && which make  && make --version) || echo "Fatal. No make found."
+	echo -e "\n\n"
+	(echo "Checking bash" && which bash  && bash --version) || echo "Fatal. No bash found."
+	echo -e "\n\n"
+	(echo "Checking awk" && which awk  && awk --version) || echo "Fatal. No awk found."
+	echo -e "\n\n"
+	(echo "Checking sed" && which sed  && sed --version) || echo "Fatal. No sed found."
+	echo -e "\n\n"
+	(echo "Checking grep" && which grep  && grep --version) || echo "Fatal. No grep found."
+	echo -e "\n\n"
+	(echo "Checking g++" && which g++  && g++ --version) || echo "No g++ found."
+	echo -e "\n\n"
+	(echo "Checking gcc" && which gcc  && gcc --version) || echo "No gcc found."
+	echo -e "\n\n"
+	(echo "Checking javac" && which javac  && javac -version) || echo "No javac found."
+	echo -e "\n\n"
+	(echo "Checking java" && which java  && java -version) || echo "No java found."
+	echo -e "\n\n"
+	(echo "Checking dcc32" && which dcc32  && dcc32 --version) || echo "No dcc32 found."
+	echo -e "\n\n"
+	(echo "Checking fpc" && which fpc  && fpc -iV) || echo "No fpc found."
+	echo -e "\n\n"
+	(echo "Checking python" && which python  && python --version) || echo "No python found."
+	echo -e "\n\n"
+	(echo "Checking python3" && which python3  && python3 --version) || echo "No python3 found."
+	echo -e "\n\n"
+	(echo "Checking dos2unix" && which dos2unix  && dos2unix --version) || echo "No dos2unix found."
+	echo -e "\n\n"
+	(echo "Checking unix2dos" && which unix2dos  && unix2dos --version) || echo "No unix2dos found."
+	echo -e "\n\n"
+	(echo "Checking md5sum" && which md5sum  && md5sum --version) || echo " No md5sum found."
+	echo -e "\n\n"
+
+define TestInfoRuleTemplate
+.PHONY : info$(1)
+ifneq ($(DEBUGMODE),1)
+.SILENT : info$(1)
+endif
+info$(1) :
+	echo "Generating Line : " "$(Gen$(1)Line)"
+	$(if $(__internal_enable_groups),\
+		echo "Test Group : " "$(Test$(1)Group)"; \
+	)
+endef
+
+$(foreach test,$(Tests), $(eval $(call TestInfoRuleTemplate,$(test))))
+
+info :
+	$(foreach test,$(Tests),\
+		echo -n $(test)' ' ; \
+		$(if $(__internal_enable_groups),\
+			echo -n "(g = $(Test$(test)Group)) "; \
+		)  \
+		echo "$(Gen$(test)Line)";\
+	)
+
+
+#-----------------------------------------END INFO TARGETS-------------------------------------------
+#-----------------------------------------CONFIG TOOLS-------------------------------------------
+
+define ARGET
+	$(patsubst $(2):%,%,$(filter $(2):%,$(1)))
+endef
+
+define CONF
+	$(eval $(1) := $(2))
+	echo $(1) := $($(1)) >>.config.temp;
+endef
+
+EXTS += CPP C JAVA PY PAS DPR D
+EXTSRC += CPP:cpp C:c JAVA:java PY:py PAS:pas DPR:dpr D:d
+EXTEXEC += CPP:exe C:exe JAVA:jar PY:py PAS:exe DPR:exe D:exe
+
+define FindTests
+$(foreach test,$(Tests),\
+$(if \
+$(filter $(1),$(basename $(notdir $(Gen$(test)Line)))) \
+,$(testsDir)/$(test) ) \
+)
+endef
+
+.INTERMEDIATE : __internal_config_finish __internal_config_getTests __internal_config_update_genflags __internal_config_prepare __internal_config_genlines
+
+ifneq ($(DEBUGMODE),1)
+.SILENT : __internal_config_finish __internal_config_getTests __internal_config_update_genflags __internal_config_prepare __internal_config_genlines
+endif
+
+.ONESHELL: .config reload __internal_config_finish __internal_config_getTests __internal_config_update_genflags __internal_config_prepare __internal_config_genlines
+
+ifneq ($(NonDefaultGenlines),1)
+$(GenLinesFile) : __internal_config_genlines
+
+__internal_config_genlines : $(GenLinesGenerator)
+	echo "Remaking $(GenLinesFile)"
+	@$(if $(__internal_OnWindows),-if [ -e $(GenLinesFile) ] ; then attrib -H $(GenLinesFile); fi)
+	./$(GenLinesGenerator) > $(GenLinesFile)
+	@$(if $(__internal_OnWindows),-if [ -e $(GenLinesFile) ] ; then attrib +H $(GenLinesFile); fi)
+else
+__internal_config_genlines : $(GenLinesFile)
+	
+endif
+
+__internal_config_getTests : __internal_config_genlines
+	$(eval $(shell \
+	cat $(GenLinesFile) | sed -e 's/  */ /g' -e 's/#.*$$//g' -e 's/ *$$//g' -e 's/^ *//g' | awk ' \
+	BEGIN { \
+		test = 1; \
+	} \
+	NF != 0 && substr($$1,1,1) != "\r" { \
+		printf "$$(eval Gen$(TestMask)Line := ",test; \
+		for (i = 1; i <= NF; i++) { \
+			res = $$i; \
+			printf "%s",res; \
+			if (i != NF) \
+				printf " "; \
+			else \
+				printf ")\n"; \
+		} \
+		test++; \
+	} \
+	END { \
+		printf "$$(eval Tests := "; \
+		for (i = 1; i < test; i++){ \
+			printf "$(TestMask) ",i; \
+		} \
+		printf(")\n"); \
+	}'\
+	))
+
+
+define updateGenFlagRule
+.INTERMEDIATE : __internal_config_update_genflag_$(1)
+ifneq ($(DEBUGMODE),1)
+.SILENT : __internal_config_update_genflag_$(1)
+endif
+__internal_config_update_genflag_$(1) : __internal_config_getTests
+	$(if $$(filter $(1),$$(Tests)), \
+		( echo "$$(Gen$(1)Line)" | diff - $(tempDir)/$(1).gen 2>/dev/null >/dev/null) || (echo "$$(Gen$(1)Line)" > $(tempDir)/$(1).gen),\
+		rm -f "$(tempDir)/$(1).gen"\
+	)	
+endef
+
+__internal_config_genFlags := $(patsubst $(tempDir)/%.gen,%,$(wildcard $(tempDir)/*.gen))
+
+
+$(foreach flag,$(__internal_config_genFlags),$(eval $(call updateGenFlagRule,$(flag))))
+
+__internal_config_update_genflags : $(foreach flag,$(__internal_config_genFlags),__internal_config_update_genflag_$(flag))
+
+__internal_config_prepare :
+	@$(if $(__internal_OnWindows),-if [ -e .config ] ; then attrib -H .config; fi)
+	rm -f .config
+	rm -f .config.temp
+
+#for usage in if
+, := ,
+
+
+__internal_config_finish : __internal_config_getTests __internal_config_prepare
+	echo Remaking .config
+	echo \#THIS FILE IS AUTOMATICLY GENERATED DO NOT MODIFY IT >.config.temp
+	echo ConfigVersion := $(MAKETOOLVERSION) >>.config.temp
+	echo all :  >>.config.temp
+	$(if $(wildcard $(gradersDir)),echo __internal_enable_graders := 1 >>.config.temp)
+	$(if $(shell grep -E "# *NEW *GROUP *" $(GenLinesFile) ),$(call CONF,__internal_enable_groups,1))
+	echo >>.config.temp
+	echo problem := $(problem) >>.config.temp
+	echo >>.config.temp
+	$(if $(wildcard $(CheckerSrc)), , $(eval CheckerSrc := $(firstword $(shell bash -c "/usr/bin/find -iname 'check.cpp' -or -iname 'check.java'"))))
+	if [ "$(filter %.cpp,$(CheckerSrc))" != "" ] ; then \
+		echo "Detected checker $(CheckerSrc)";\
+		echo CheckerSrc ?= $(CheckerSrc) >>.config.temp;\
+		echo CheckerExec ?= $(patsubst %.cpp,$(binDir)/%.exe,$(notdir $(CheckerSrc))) >> .config.temp;\
+		echo CheckerCommand ?= $(patsubst %.cpp,./$(binDir)/%.exe,$(notdir $(CheckerSrc))) >> .config.temp;\
+	elif [ "$(filter %.java,$(CheckerSrc))" != "" ] ; then\
+		echo "Detected checker $(CheckerSrc)";\
+		echo CheckerSrc ?= $(CheckerSrc) >>.config.temp;\
+		echo CheckerExec ?= $(patsubst %.java,$(binDir)/%.jar,$(notdir $(CheckerSrc))) >>.config.temp;\
+		echo CheckerCommand ?= $(patsubst %.java,java -jar -Xmx256M -Xss128M -ea ./$(binDir)/%.jar,$(notdir $(CheckerSrc))) >>.config.temp;\
+	else \
+		echo CheckerSrc ?= >>.config.temp ; \
+		echo CheckerExec ?= >>.config.temp ; \
+		echo CheckerCommand ?= diff >>.config.temp ; \
+		echo Warning: no 'check.*' found. Using diff as checker. ;\
+	fi
+	echo >>.config.temp
+	$(if $(wildcard $(ValidatorSrc)), , $(eval ValidatorSrc := $(firstword $(shell bash -c "/usr/bin/find -iname 'validate.cpp' -or -iname 'validate.java'"))))
+	if [ "$(filter %.cpp,$(ValidatorSrc))" != "" ] ; then \
+		echo "Detected validator $(ValidatorSrc)";\
+		echo ValidatorSrc ?= $(ValidatorSrc) >>.config.temp;\
+		echo ValidatorExec ?= $(patsubst %.cpp,$(binDir)/%.exe,$(notdir $(ValidatorSrc))) >> .config.temp;\
+		echo ValidatorCommand ?= $(patsubst %.cpp,./$(binDir)/%.exe,$(notdir $(ValidatorSrc))) >> .config.temp;\
+	elif [ "$(filter %.java,$(ValidatorSrc))" != "" ] ; then\
+		echo "Detected validator $(ValidatorSrc)";\
+		echo ValidatorSrc ?= $(ValidatorSrc) >>.config.temp;\
+		echo ValidatorExec ?= $(patsubst %.java,$(binDir)/%.jar,$(notdir $(ValidatorSrc))) >>.config.temp;\
+		echo ValidatorCommand ?= $(patsubst %.java,java -jar -Xmx256M -Xss128M -ea ./$(binDir)/%.jar,$(notdir $(ValidatorSrc))) >>.config.temp;\
+	else \
+		echo ValidatorSrc ?= >>.config.temp;\
+		echo ValidatorExec ?= >>.config.temp ; \
+		echo ValidatorCommand ?= NO >>.config.temp ; \
+		echo Warning: no 'validate.*' found. Using no validator. ;\
+	fi
+	echo >>.config.temp
+	$(call CONF,StdoutGenList,$(sort $(filter-out $(FileGenList) $(MultiGenList),$(basename $(notdir $(wildcard $(srcDir)/gen* $(srcDir)/Gen* $(srcDir)/twf.c))) $(AdditionalStdoutGens))))
+	$(call CONF,GenList,$(sort $(StdoutGenList) $(FileGenList) $(MultiGenList)))
+	echo >>.config.temp
+	$(foreach gen, $(GenList), \
+		$(call CONF,$(gen)Tests,$(call FindTests,$(gen))) \
+		$(foreach ext,$(EXTS),\
+			$(eval srcext := $(call ARGET,$(EXTSRC),$(ext)))\
+			$(eval execext := $(call ARGET,$(EXTEXEC),$(ext)))\
+			if [ -e $(srcDir)/$(gen).$(srcext) ] ; then \
+				echo .DELETE_ON_ERROR : $(binDir)/$(gen).$(execext) >>.config.temp;\
+				echo .SECONDARY : $(binDir)/$(gen).$(execext) >>.config.temp;\
+				echo $(binDir)/$(gen).$(execext) : $(srcDir)/$(gen).$(srcext) "|" $(binDir) >>.config.temp;\
+				$(if $(filter $(gen),$(MultiGenList)), \
+					echo $$\($(gen)Tests')' : __internal_$(gen)MultiTestIntermediate >>.config.temp;\
+					echo .INTERMEDIATE : __internal_$(gen)MultiTestIntermediate >>.config.temp;\
+					echo __internal_$(gen)Major := $(patsubst $(testsDir)/%,%,$(firstword $($(gen)Tests))) >>.config.temp;\
+					echo MultiGenInternalRules += __internal_$(gen)MultiTestIntermediate >>.config.temp;\
+					echo __internal_$(gen)MultiTestIntermediate : $(srcDir)/$(gen).$(srcext) "|" $(binDir)/$(gen).$(execext) >>.config.temp;\
+				 , \
+				    echo $$\($(gen)Tests')' : $(srcDir)/$(gen).$(srcext) "|" $(binDir)/$(gen).$(execext) >>.config.temp;\
+				 )\
+			fi; \
+		)\
+		echo >>.config.temp;\
+	)
+	echo >>.config.temp
+	$(call CONF,HandTestsFile,$(sort $(call FindTests,cp)))
+	$(call CONF,HandTests,$(patsubst $(srcDir)/%.$(HandSuffix),$(testsDir)/%,$(wildcard $(srcDir)/*.$(HandSuffix))))
+	echo $$\(HandTests\) : $(testsDir)/% : $(srcDir)/%.hand >>.config.temp
+	echo >>.config.temp
+	$(foreach ext,$(EXTS),\
+		$(eval srcext := $(call ARGET,$(EXTSRC),$(ext)))\
+		$(eval execext := $(call ARGET,$(EXTEXEC),$(ext)))\
+		echo $(ext)SolSrc := $(wildcard $(solutionsDir)/$(problem)_*.$(srcext)) >>.config.temp;\
+		echo $(ext)SolExec := $$\($(ext)SolSrc:$(solutionsDir)/%.$(srcext)=$(binDir)/%.$(execext)')' >>.config.temp;\
+		echo $(ext)SolShortNames := $$\($(ext)SolExec:$(binDir)/$(problem)_%.$(execext)=%')' >>.config.temp;\
+		echo >>.config.temp;\
+	)
+	echo SolSrc := $$\(foreach ext,$(EXTS),$$\($$\(ext')'SolSrc'))' >>.config.temp
+	echo SolExec := $$\(foreach ext,$(EXTS),$$\($$\(ext')'SolExec'))' >>.config.temp
+	echo SolShortNames := $$\(foreach ext,$(EXTS),$$\($$\(ext')'SolShortNames'))' >>.config.temp
+	echo >>.config.temp
+	echo Tests := $(Tests) >>.config.temp
+	echo InDirTests := $$\(Tests:%=$(testsDir)/%')' >>.config.temp
+	echo TestsValidateFlags := $$\(Tests:%=$(tempDir)/%.val')' >>.config.temp
+	echo TestsGenerateFlags := $$\(Tests:%=$(tempDir)/%.gen')' >>.config.temp
+	echo TestAnswers := $$\(Tests:%=%.a')' >>.config.temp
+	echo InDirTestAnswers := $$\(Tests:%=$(testsDir)/%.a')' >>.config.temp
+	$(call CONF,FileTests, $(sort $(foreach gen,$(FileGenList) $(MultiGenList),$($(gen)Tests)) $(HandTestsFile)))
+	$(call CONF,MultiGenTests, $(sort $(foreach gen,$(MultiGenList),$($(gen)Tests))))
+	echo >>.config.temp
+	$(foreach test,$(Tests), echo "Gen$(test)Line := $(Gen$(test)Line)" >> .config.temp;)
+	echo >>.config.temp
+	$(if $(__internal_enable_groups), \
+		cat $(GenLinesFile) | sed -e 's/  */ /g' -e 's/ *$$//g' -e 's/^ *//g' | awk ' \
+		BEGIN { \
+			test = 1; \
+			group = 0; \
+		} \
+		NF != 0 && substr($$1,1,1) != "#" && substr($$1,1,1) != "\r"{ \
+			printf "Test$(TestMask)Group := %d\n"$(,)test$(,)group; \
+			test++; \
+		} \
+		/# *NEW *GROUP */ { \
+			group += 1; \
+		} \
+		'>>.config.temp; \
+		echo >>.config.temp;\
+	)
+	@$(if $(__internal_OnWindows),-if [ -e .config.temp ] ; then attrib +H .config.temp; fi)
+
+
+.config: $(GenLinesFile) __internal_config_genlines __internal_config_finish __internal_config_update_genflags
+	mv .config.temp .config
+	# this one is work around for FAR 3, which set's argv[0] as currentPath/"absolutePath" when running make
+	$(if $(shell echo $(MAKE) | grep '"'), echo '" found in MAKE="$(MAKE)". Switching to `which make` as make.'$(eval MAKE=$(shell which make)))
+
+reload: __internal_config_genlines __internal_config_finish __internal_config_update_genflags
+	mv .config.temp .config
+	# this one is work around for FAR 3, which set's argv[0] as currentPath/"absolutePath" when running make
+	$(if $(shell echo $(MAKE) | grep '"'), echo '" found in MAKE="$(MAKE)". Switching to `which make` as make.'$(eval MAKE=$(shell which make)))
+#-----------------------------------------END CONFIG TOOLS-------------------------------------------

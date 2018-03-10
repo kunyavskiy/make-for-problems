@@ -1,0 +1,15 @@
+#this is an example of makefile for problem. 
+
+mainSuffix := 
+
+#END OF CONFIGURABLE PART
+
+include makefile.main
+
+#this lines should be used is groups.awk used 
+#groups.cfg : $(srcDir)/groups.awk $(GenLinesFile)
+#	awk -f $(srcDir)/groups.awk $(GenLinesFile)
+#	@cat groups.cfg.temp scoring.cfg.temp >groups.cfg
+#	@rm groups.cfg.temp scoring.cfg.temp
+
+#all : groups.cfg
