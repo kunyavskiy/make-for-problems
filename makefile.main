@@ -336,7 +336,7 @@ endif
 ifneq ($(ValidatorCommand),NO)
 $(TestsValidateFlags) : $(tempDir)/%.val : $(testsDir)/% $(ValidatorSrc) | $(ValidatorExec) $(tempDir)
 	rm -f "$(testsDir)/$*.bad"
-	(echo "Validating $*" && $(ValidatorCommand) --group $(Test$*Group) <$(testsDir)/$*) || (mv $(testsDir)/$* $(testsDir)/$*.bad && false)
+	(echo "Validating $*" && $(ValidatorCommand) $(if $(Test$*Group),--group $(Test$*Group)) <$(testsDir)/$*) <$(testsDir)/$*) || (mv $(testsDir)/$* $(testsDir)/$*.bad && false)
 	if [ -e $(statementDir)/$*.t ] ; then \
 		diff -w $(testsDir)/$* $(statementDir)/$*.t || (mv $(testsDir)/$* $(testsDir)/$*.bad && echo "Test $* doesn't match to $(statementDir)/$*.t" && false);\
 	fi
