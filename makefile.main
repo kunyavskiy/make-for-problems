@@ -588,13 +588,16 @@ endif
  
 
 $(gsFiles) : $(tempDir)/%.gs : $(tempDir)/%.val
-	@rm -f $@
-	@$(foreach group, $(allGroups), ($(ValidatorCommand) --group $(group) <$(testsDir)/$* 2>/dev/null && echo $(group) >> $@) || true ;)
+	rm -f $@
+	$(foreach group, $(allGroups), ($(ValidatorCommand) --group $(group) <$(testsDir)/$* 2>/dev/null && echo $(group) >> $@) || true ;)
 
 valuer.cfg: $(gsFiles) makefile
 	@rm -f $@
 	@$(foreach group, $(allGroups), ((grep -lxe "$(group)" $^ | sed -e "s@$(tempDir)/@@g" -e "s@\.gs@@g" | xargs echo -n ) && echo ";$(word $(shell echo $$(($(group) + 1))),$(EJUDGE_SCORES))" ) | tr " " "," >> $@ ;)
 endif
+
+clean :: 
+	rm -f valuer.cfg
 #-----------------------------------------END OF SCROING-------------------------------------------
 #-----------------------------------------CONFIG TOOLS-------------------------------------------
 
