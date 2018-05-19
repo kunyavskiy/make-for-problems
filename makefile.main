@@ -583,7 +583,9 @@ gsFiles := $(Tests:%=$(tempDir)/%.gs)
 allGroups := $(shell echo $(sort $(foreach t, $(Tests),$(Test$(t)Group))) | tr " " "\n" | sort -n)
 
 ifneq ($(words $(EJUDGE_SCORES)), $(words $(allGroups)))
-$(error wrong number of scores expected $(words $(allGroups)), found $(words $(EJUDGE_SCORES)))
+ifneq ($(words $(allGroups)), 0)
+$(warning wrong number of scores expected $(words $(allGroups)), found $(words $(EJUDGE_SCORES)))
+endif
 endif
  
 
@@ -594,10 +596,11 @@ $(gsFiles) : $(tempDir)/%.gs : $(tempDir)/%.val
 valuer.cfg: $(gsFiles) makefile
 	@rm -f $@
 	@$(foreach group, $(allGroups), ((grep -lxe "$(group)" $^ | sed -e "s@$(tempDir)/@@g" -e "s@\.gs@@g" | xargs echo -n ) && echo ";$(word $(shell echo $$(($(group) + 1))),$(EJUDGE_SCORES))" ) | tr " " "," >> $@ ;)
-endif
 
 clean :: 
 	rm -f valuer.cfg
+
+endif
 #-----------------------------------------END OF SCROING-------------------------------------------
 #-----------------------------------------CONFIG TOOLS-------------------------------------------
 
